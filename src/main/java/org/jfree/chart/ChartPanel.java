@@ -151,7 +151,7 @@
  *               change event (DG);
  * 16-Jan-2009 : Use XOR for zoom rectangle only if useBuffer is false (DG);
  * 18-Mar-2009 : Added mouse wheel support (DG);
- * 19-Mar-2009 : Added panning on mouse drag support - based on Ulrich 
+ * 19-Mar-2009 : Added panning on mouse drag support - based on Ulrich
  *               Voigt's patch 2686040 (DG);
  * 26-Mar-2009 : Changed fillZoomRectangle default to true, and only change
  *               cursor for CTRL-mouse-click if panning is enabled (DG);
@@ -166,10 +166,10 @@
  * 08-Jun-2009 : Fixed bug in setMouseWheelEnabled() (DG);
  * 06-Jul-2009 : Clear off-screen buffer to fully transparent (DG);
  * 10-Oct-2011 : localization fix: bug #3353913 (MH);
- * 05-Jul-2012 : Remove reflection for MouseWheelListener - only needed for 
+ * 05-Jul-2012 : Remove reflection for MouseWheelListener - only needed for
  *               JRE 1.3.1 (DG);
  * 02-Jul-2013 : Use ParamChecks class (DG);
- * 12-Sep-2013 : Provide auto-detection for JFreeSVG and OrsonPDF 
+ * 12-Sep-2013 : Provide auto-detection for JFreeSVG and OrsonPDF
  *               libraries (no compile time dependencies) (DG);
  * 29-Aug-2014 : Localisation updates from patch attached to bug 1129 (SL);
  * 06-Feb-2017 : Add dispose() call for graphics object, see issue #38 (DG);
@@ -219,7 +219,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.EventListener;
-import java.util.Iterator;
 import java.util.List;
 import java.util.ResourceBundle;
 
@@ -252,7 +251,6 @@ import org.jfree.chart.plot.PlotRenderingInfo;
 import org.jfree.chart.plot.Zoomable;
 import org.jfree.chart.util.Args;
 import org.jfree.chart.util.ResourceBundleWrapper;
-import org.jfree.chart.util.SerialUtils;
 
 /**
  * A Swing GUI component for displaying a {@link JFreeChart} object.
@@ -293,9 +291,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
 
     /** The default limit above which chart scaling kicks in. */
     public static final int DEFAULT_MAXIMUM_DRAW_HEIGHT = 768;
-
-    /** The minimum size required to perform a zoom on a rectangle */
-    public static final int DEFAULT_ZOOM_TRIGGER_DISTANCE = 10;
 
     /** Properties action command. */
     public static final String PROPERTIES_COMMAND = "PROPERTIES";
@@ -417,21 +412,8 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
     /** A flag that controls whether or not range zooming is enabled. */
     private boolean rangeZoomable = false;
 
-    /**
-     * The zoom rectangle starting point (selected by the user with a mouse
-     * click).  This is a point on the screen, not the chart (which may have
-     * been scaled up or down to fit the panel).
-     */
-    private Point2D zoomPoint = null;
-
-    /** The zoom rectangle (selected by the user with the mouse). */
-    private transient Rectangle2D zoomRectangle = null;
-
-    /** Controls if the zoom rectangle is drawn as an outline or filled. */
-    private boolean fillZoomRectangle = true;
-
-    /** The minimum distance required to drag the mouse to trigger a zoom. */
-    private int zoomTriggerDistance;
+    /** A strategy to handle zoom rectangle processing and painting. */
+    private DefaultSelectionZoomStrategy selectionZoomStrategy = new DefaultSelectionZoomStrategy();
 
     /** A flag that controls whether or not horizontal tracing is enabled. */
     private boolean horizontalAxisTrace = false;
@@ -516,20 +498,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @since 1.0.7
      */
     private boolean zoomAroundAnchor;
-
-    /**
-     * The paint used to draw the zoom rectangle outline.
-     *
-     * @since 1.0.13
-     */
-    private transient Paint zoomOutlinePaint;
-
-    /**
-     * The zoom fill paint (should use transparency).
-     *
-     * @since 1.0.13
-     */
-    private transient Paint zoomFillPaint;
 
     /** The resourceBundle for the localization. */
     protected static ResourceBundle localizationResources
@@ -711,7 +679,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         this.minimumDrawHeight = minimumDrawHeight;
         this.maximumDrawWidth = maximumDrawWidth;
         this.maximumDrawHeight = maximumDrawHeight;
-        this.zoomTriggerDistance = DEFAULT_ZOOM_TRIGGER_DISTANCE;
 
         // set up popup menu...
         this.popup = null;
@@ -736,8 +703,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         this.ownToolTipReshowDelay = ttm.getReshowDelay();
 
         this.zoomAroundAnchor = false;
-        this.zoomOutlinePaint = Color.BLUE;
-        this.zoomFillPaint = new Color(0, 0, 255, 63);
 
         this.panMask = InputEvent.CTRL_MASK;
         // for MacOSX we can't use the CTRL key for mouse drags, see:
@@ -1046,13 +1011,31 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
     }
 
     /**
+     * Returns a strategy used to control and draw zoom rectangle.
+     *
+     * @return A zoom rectangle strategy.
+     */
+    public DefaultSelectionZoomStrategy getSelectionZoomStrategy() {
+        return selectionZoomStrategy;
+    }
+
+    /**
+     * A strategy used to control and draw zoom rectangle.
+     *
+     * @param selectionZoomStrategy  A zoom rectangle strategy.
+     */
+    public void setSelectionZoomStrategy(DefaultSelectionZoomStrategy selectionZoomStrategy) {
+        this.selectionZoomStrategy = selectionZoomStrategy;
+    }
+
+    /**
      * Returns the flag that controls whether or not the zoom rectangle is
      * filled when drawn.
      *
      * @return A boolean.
      */
     public boolean getFillZoomRectangle() {
-        return this.fillZoomRectangle;
+        return this.selectionZoomStrategy.getFillZoomRectangle();
     }
 
     /**
@@ -1062,7 +1045,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      *              zoom, otherwise it will be outlined.
      */
     public void setFillZoomRectangle(boolean flag) {
-        this.fillZoomRectangle = flag;
+        this.selectionZoomStrategy.setFillZoomRectangle(flag);
     }
 
     /**
@@ -1072,7 +1055,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @return The distance (in Java2D units).
      */
     public int getZoomTriggerDistance() {
-        return this.zoomTriggerDistance;
+        return this.selectionZoomStrategy.getZoomTriggerDistance();
     }
 
     /**
@@ -1082,7 +1065,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @param distance  the distance (in Java2D units).
      */
     public void setZoomTriggerDistance(int distance) {
-        this.zoomTriggerDistance = distance;
+        this.selectionZoomStrategy.setZoomTriggerDistance(distance);
     }
 
     /**
@@ -1252,7 +1235,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @since 1.0.13
      */
     public Paint getZoomFillPaint() {
-        return this.zoomFillPaint;
+        return selectionZoomStrategy.getZoomFillPaint();
     }
 
     /**
@@ -1266,8 +1249,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @since 1.0.13
      */
     public void setZoomFillPaint(Paint paint) {
-        Args.nullNotPermitted(paint, "paint");
-        this.zoomFillPaint = paint;
+        selectionZoomStrategy.setZoomFillPaint(paint);
     }
 
     /**
@@ -1281,7 +1263,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @since 1.0.13
      */
     public Paint getZoomOutlinePaint() {
-        return this.zoomOutlinePaint;
+        return selectionZoomStrategy.getZoomOutlinePaint();
     }
 
     /**
@@ -1295,7 +1277,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      * @since 1.0.13
      */
     public void setZoomOutlinePaint(Paint paint) {
-        this.zoomOutlinePaint = paint;
+        this.selectionZoomStrategy.setZoomOutlinePaint(paint);
     }
 
     /**
@@ -1636,7 +1618,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         // redraw the zoom rectangle (if present) - if useBuffer is false,
         // we use XOR so we can XOR the rectangle away again without redrawing
         // the chart
-        drawZoomRectangle(g2, !this.useBuffer);
+        selectionZoomStrategy.drawZoomRectangle(g2, !this.useBuffer);
 
         g2.dispose();
 
@@ -1686,9 +1668,10 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         // coordinates, or use defaults...
         double screenX = -1.0;
         double screenY = -1.0;
-        if (this.zoomPoint != null) {
-            screenX = this.zoomPoint.getX();
-            screenY = this.zoomPoint.getY();
+        Point2D zoomPoint = this.selectionZoomStrategy.getZoomPoint();
+        if (zoomPoint != null) {
+            screenX = zoomPoint.getX();
+            screenY = zoomPoint.getY();
         }
 
         if (command.equals(PROPERTIES_COMMAND)) {
@@ -1831,14 +1814,15 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
                 // method
             }
         }
-        else if (this.zoomRectangle == null) {
+        else if (!this.selectionZoomStrategy.isActivated()) {
             Rectangle2D screenDataArea = getScreenDataArea(e.getX(), e.getY());
             if (screenDataArea != null) {
-                this.zoomPoint = getPointInRectangle(e.getX(), e.getY(),
+                Point2D zoomPoint = getPointInRectangle(e.getX(), e.getY(),
                         screenDataArea);
+                selectionZoomStrategy.setZoomPoint(zoomPoint);
             }
             else {
-                this.zoomPoint = null;
+                selectionZoomStrategy.setZoomPoint(null);
             }
             if (e.isPopupTrigger()) {
                 if (this.popup != null) {
@@ -1907,7 +1891,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         }
 
         // if no initial zoom point was set, ignore dragging...
-        if (this.zoomPoint == null) {
+        if (this.selectionZoomStrategy.getZoomPoint() == null) {
             return;
         }
         Graphics2D g2 = (Graphics2D) getGraphics();
@@ -1917,7 +1901,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         // the buffer (if there is a buffer, then at the end of this method we
         // just trigger a repaint)
         if (!this.useBuffer) {
-            drawZoomRectangle(g2, true);
+            selectionZoomStrategy.drawZoomRectangle(g2, true);
         }
 
         boolean hZoom, vZoom;
@@ -1929,28 +1913,11 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
             hZoom = this.domainZoomable;
             vZoom = this.rangeZoomable;
         }
+        Point2D zoomPoint = this.selectionZoomStrategy.getZoomPoint();
         Rectangle2D scaledDataArea = getScreenDataArea(
-                (int) this.zoomPoint.getX(), (int) this.zoomPoint.getY());
-        if (hZoom && vZoom) {
-            // selected rectangle shouldn't extend outside the data area...
-            double xmax = Math.min(e.getX(), scaledDataArea.getMaxX());
-            double ymax = Math.min(e.getY(), scaledDataArea.getMaxY());
-            this.zoomRectangle = new Rectangle2D.Double(
-                    this.zoomPoint.getX(), this.zoomPoint.getY(),
-                    xmax - this.zoomPoint.getX(), ymax - this.zoomPoint.getY());
-        }
-        else if (hZoom) {
-            double xmax = Math.min(e.getX(), scaledDataArea.getMaxX());
-            this.zoomRectangle = new Rectangle2D.Double(
-                    this.zoomPoint.getX(), scaledDataArea.getMinY(),
-                    xmax - this.zoomPoint.getX(), scaledDataArea.getHeight());
-        }
-        else if (vZoom) {
-            double ymax = Math.min(e.getY(), scaledDataArea.getMaxY());
-            this.zoomRectangle = new Rectangle2D.Double(
-                    scaledDataArea.getMinX(), this.zoomPoint.getY(),
-                    scaledDataArea.getWidth(), ymax - this.zoomPoint.getY());
-        }
+                (int) zoomPoint.getX(), (int) zoomPoint.getY());
+
+        selectionZoomStrategy.updateZoomRectangleSelection(e, hZoom, vZoom, scaledDataArea);
 
         // Draw the new zoom rectangle...
         if (this.useBuffer) {
@@ -1959,7 +1926,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         else {
             // with no buffer, we use XOR to draw the rectangle "over" the
             // chart...
-            drawZoomRectangle(g2, true);
+            selectionZoomStrategy.drawZoomRectangle(g2, true);
         }
         g2.dispose();
 
@@ -1982,7 +1949,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
             setCursor(Cursor.getDefaultCursor());
         }
 
-        else if (this.zoomRectangle != null) {
+        else if (this.selectionZoomStrategy.isActivated()) {
             boolean hZoom, vZoom;
             if (this.orientation == PlotOrientation.HORIZONTAL) {
                 hZoom = this.rangeZoomable;
@@ -1993,52 +1960,25 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
                 vZoom = this.rangeZoomable;
             }
 
+            Point2D zoomPoint = this.selectionZoomStrategy.getZoomPoint();
             boolean zoomTrigger1 = hZoom && Math.abs(e.getX()
-                - this.zoomPoint.getX()) >= this.zoomTriggerDistance;
+                - zoomPoint.getX()) >= this.selectionZoomStrategy.getZoomTriggerDistance();
             boolean zoomTrigger2 = vZoom && Math.abs(e.getY()
-                - this.zoomPoint.getY()) >= this.zoomTriggerDistance;
+                - zoomPoint.getY()) >= this.selectionZoomStrategy.getZoomTriggerDistance();
             if (zoomTrigger1 || zoomTrigger2) {
-                if ((hZoom && (e.getX() < this.zoomPoint.getX()))
-                    || (vZoom && (e.getY() < this.zoomPoint.getY()))) {
+                if ((hZoom && (e.getX() < zoomPoint.getX()))
+                    || (vZoom && (e.getY() < zoomPoint.getY()))) {
                     restoreAutoBounds();
                 }
                 else {
-                    double x, y, w, h;
                     Rectangle2D screenDataArea = getScreenDataArea(
-                            (int) this.zoomPoint.getX(),
-                            (int) this.zoomPoint.getY());
-                    double maxX = screenDataArea.getMaxX();
-                    double maxY = screenDataArea.getMaxY();
-                    // for mouseReleased event, (horizontalZoom || verticalZoom)
-                    // will be true, so we can just test for either being false;
-                    // otherwise both are true
-                    if (!vZoom) {
-                        x = this.zoomPoint.getX();
-                        y = screenDataArea.getMinY();
-                        w = Math.min(this.zoomRectangle.getWidth(),
-                                maxX - this.zoomPoint.getX());
-                        h = screenDataArea.getHeight();
-                    }
-                    else if (!hZoom) {
-                        x = screenDataArea.getMinX();
-                        y = this.zoomPoint.getY();
-                        w = screenDataArea.getWidth();
-                        h = Math.min(this.zoomRectangle.getHeight(),
-                                maxY - this.zoomPoint.getY());
-                    }
-                    else {
-                        x = this.zoomPoint.getX();
-                        y = this.zoomPoint.getY();
-                        w = Math.min(this.zoomRectangle.getWidth(),
-                                maxX - this.zoomPoint.getX());
-                        h = Math.min(this.zoomRectangle.getHeight(),
-                                maxY - this.zoomPoint.getY());
-                    }
-                    Rectangle2D zoomArea = new Rectangle2D.Double(x, y, w, h);
+                            (int) zoomPoint.getX(),
+                            (int) zoomPoint.getY());
+
+                    Rectangle2D zoomArea = selectionZoomStrategy.getZoomRectangle(hZoom, vZoom, screenDataArea);
                     zoom(zoomArea);
                 }
-                this.zoomPoint = null;
-                this.zoomRectangle = null;
+                this.selectionZoomStrategy.reset();
             }
             else {
                 // erase the zoom rectangle
@@ -2047,11 +1987,10 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
                     repaint();
                 }
                 else {
-                    drawZoomRectangle(g2, true);
+                    selectionZoomStrategy.drawZoomRectangle(g2, true);
                 }
                 g2.dispose();
-                this.zoomPoint = null;
-                this.zoomRectangle = null;
+                this.selectionZoomStrategy.reset();
             }
 
         }
@@ -2366,8 +2305,8 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
             boolean savedNotify = plot.isNotify();
             plot.setNotify(false);
             // we need to guard against this.zoomPoint being null
-            Point2D zp = (this.zoomPoint != null
-                    ? this.zoomPoint : new Point());
+            Point2D zoomPoint = this.selectionZoomStrategy.getZoomPoint();
+            Point2D zp = zoomPoint != null ? zoomPoint : new Point();
             z.zoomDomainAxes(0.0, this.info.getPlotInfo(), zp);
             plot.setNotify(savedNotify);
         }
@@ -2386,8 +2325,8 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
             boolean savedNotify = plot.isNotify();
             plot.setNotify(false);
             // we need to guard against this.zoomPoint being null
-            Point2D zp = (this.zoomPoint != null
-                    ? this.zoomPoint : new Point());
+            Point2D zoomPoint = this.selectionZoomStrategy.getZoomPoint();
+            Point2D zp = zoomPoint != null ? zoomPoint : new Point();
             z.zoomRangeAxes(0.0, this.info.getPlotInfo(), zp);
             plot.setNotify(savedNotify);
         }
@@ -2549,37 +2488,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      */
     public void setZoomOutFactor(double factor) {
         this.zoomOutFactor = factor;
-    }
-
-    /**
-     * Draws zoom rectangle (if present).
-     * The drawing is performed in XOR mode, therefore
-     * when this method is called twice in a row,
-     * the second call will completely restore the state
-     * of the canvas.
-     *
-     * @param g2 the graphics device.
-     * @param xor  use XOR for drawing?
-     */
-    private void drawZoomRectangle(Graphics2D g2, boolean xor) {
-        if (this.zoomRectangle != null) {
-            if (xor) {
-                 // Set XOR mode to draw the zoom rectangle
-                g2.setXORMode(Color.GRAY);
-            }
-            if (this.fillZoomRectangle) {
-                g2.setPaint(this.zoomFillPaint);
-                g2.fill(this.zoomRectangle);
-            }
-            else {
-                g2.setPaint(this.zoomOutlinePaint);
-                g2.draw(this.zoomRectangle);
-            }
-            if (xor) {
-                // Reset to the default 'overwrite' mode
-                g2.setPaintMode();
-            }
-        }
     }
 
     /**
@@ -2870,10 +2778,10 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
     }
 
     /**
-     * Returns {@code true} if OrsonPDF is on the classpath, and 
+     * Returns {@code true} if OrsonPDF is on the classpath, and
      * {@code false} otherwise.  The OrsonPDF library can be found at
      * http://www.object-refinery.com/pdf/
-     * 
+     *
      * @return A boolean.
      */
     private boolean isOrsonPDFAvailable() {
@@ -2885,7 +2793,7 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
         }
         return (pdfDocumentClass != null);
     }
-    
+
     /**
      * Writes the current chart to the specified file in PDF format.  This 
      * will only work when the OrsonPDF library is found on the classpath.
@@ -3292,8 +3200,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
      */
     private void writeObject(ObjectOutputStream stream) throws IOException {
         stream.defaultWriteObject();
-        SerialUtils.writePaint(this.zoomFillPaint, stream);
-        SerialUtils.writePaint(this.zoomOutlinePaint, stream);
     }
 
     /**
@@ -3307,8 +3213,6 @@ public class ChartPanel extends JPanel implements ChartChangeListener,
     private void readObject(ObjectInputStream stream)
         throws IOException, ClassNotFoundException {
         stream.defaultReadObject();
-        this.zoomFillPaint = SerialUtils.readPaint(stream);
-        this.zoomOutlinePaint = SerialUtils.readPaint(stream);
 
         // we create a new but empty chartMouseListeners list
         this.chartMouseListeners = new EventListenerList();
