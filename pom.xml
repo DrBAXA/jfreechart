@@ -69,10 +69,11 @@
     </dependencies>
 
     <distributionManagement>
-        <snapshotRepository>
-          <id>ossrh</id>
-          <url>https://oss.sonatype.org/content/repositories/snapshots</url>
-        </snapshotRepository>
+         <repository>
+	    <id>internal</id>
+	    <name>Lambert</name>
+	    <url>file:///Ondax3/public/autobuild/maven2</url>
+	</repository>
     </distributionManagement>    
     
     <build>
