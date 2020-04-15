@@ -5,6 +5,12 @@
                              http://maven.apache.org/maven-v4_0_0.xsd">
 
     <modelVersion>4.0.0</modelVersion>
+	
+    <parent>
+	    <groupId>ondax</groupId>
+        <artifactId>nevada-parent</artifactId>
+        <version>1.0-SNAPSHOT</version>
+    </parent>
 
     <name>JFreeChart</name>
 
@@ -67,14 +73,6 @@
             <scope>test</scope>
         </dependency>
     </dependencies>
-
-    <distributionManagement>
-         <repository>
-	    <id>internal</id>
-	    <name>Lambert</name>
-	    <url>file:///Ondax3/public/autobuild/maven2</url>
-	</repository>
-    </distributionManagement>    
     
     <build>
         <testSourceDirectory>src/test/java</testSourceDirectory>
